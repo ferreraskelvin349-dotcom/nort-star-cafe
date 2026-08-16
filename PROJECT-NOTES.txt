@@ -1,0 +1,11 @@
+NORTH STAR CAFE FIRE TV — PROJECT NOTES
+
+Live source: https://northstarcafemenu.com/
+TV launch URL: https://northstarcafemenu.com/?tv=1
+Package: com.northstarcafe.tv
+Orientation: Landscape
+Mode: Immersive fullscreen
+Launcher: Standard + LEANBACK_LAUNCHER
+Internet: Required for live admin/menu updates
+
+This package is source-ready for Android Studio. A compiled APK requires the Android SDK/build tools.
