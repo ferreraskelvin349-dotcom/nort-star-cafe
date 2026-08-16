@@ -6,36 +6,313 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
+          gradle-version: "8.10.2"
 
-      - name: Build signed release APK
-        run: gradle assembleRelease
-
-      - name: Find generated APK
+      - name: Create Android Fire TV project
         run: |
-          echo "Generated APK files:"
-          find . -type f -name "*.apk" -print
+          mkdir -p app/src/main/java/com/northstarcafe/tv
+          mkdir -p app/src/main/res/values
 
-      - name: Upload North Star Cafe APK
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "NorthStarCafeFireTV"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.9.1" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          import java.util.Properties
+          import java.io.FileInputStream
+
+          plugins {
+              id("com.android.application")
+          }
+
+          val keystoreProperties = Properties().apply {
+              val propsFile = rootProject.file("keystore.properties")
+              if (propsFile.exists()) {
+                  load(FileInputStream(propsFile))
+              }
+          }
+
+          android {
+              namespace = "com.northstarcafe.tv"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.northstarcafe.tv"
+                  minSdk = 22
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0.0"
+              }
+
+              signingConfigs {
+                  create("release") {
+                      storeFile = rootProject.file(
+                          (keystoreProperties["storeFile"] as String? ?: "northstar-release.jks")
+                              .removePrefix("../")
+                      )
+                      storePassword = keystoreProperties["storePassword"] as String? ?: ""
+                      keyAlias = keystoreProperties["keyAlias"] as String? ?: ""
+                      keyPassword = keystoreProperties["keyPassword"] as String? ?: ""
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      signingConfig = signingConfigs.getByName("release")
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+              <uses-feature
+                  android:name="android.software.leanback"
+                  android:required="false" />
+
+              <uses-feature
+                  android:name="android.hardware.touchscreen"
+                  android:required="false" />
+
+              <application
+                  android:allowBackup="false"
+                  android:label="North Star Cafe"
+                  android:theme="@style/Theme.NorthStarTV"
+                  android:usesCleartextTraffic="false">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:screenOrientation="landscape">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+
+              <style
+                  name="Theme.NorthStarTV"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
+                  <item name="android:windowFullscreen">true</item>
+                  <item name="android:windowNoTitle">true</item>
+                  <item name="android:windowBackground">#000000</item>
+                  <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:statusBarColor">#000000</item>
+
+              </style>
+
+          </resources>
+          EOF
+
+          cat > app/src/main/java/com/northstarcafe/tv/MainActivity.java <<'EOF'
+          package com.northstarcafe.tv;
+
+          import android.annotation.SuppressLint;
+          import android.app.Activity;
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import android.view.KeyEvent;
+          import android.view.View;
+          import android.view.Window;
+          import android.view.WindowManager;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+
+              private static final String MENU_URL =
+                  "https://northstarcafemenu.com/?tv=1&app=1&platform=firetv";
+
+              private WebView webView;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+                  getWindow().addFlags(
+                      WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                  );
+
+                  enterImmersiveMode();
+                  createWebView();
+              }
+
+              @SuppressLint("SetJavaScriptEnabled")
+              private void createWebView() {
+
+                  webView = new WebView(this);
+
+                  webView.setBackgroundColor(Color.BLACK);
+                  webView.setFocusable(true);
+                  webView.setFocusableInTouchMode(true);
+
+                  WebSettings settings = webView.getSettings();
+
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setLoadWithOverviewMode(true);
+                  settings.setUseWideViewPort(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.setWebChromeClient(new WebChromeClient());
+
+                  setContentView(webView);
+
+                  webView.loadUrl(MENU_URL);
+                  webView.requestFocus();
+              }
+
+              private void enterImmersiveMode() {
+
+                  getWindow().getDecorView().setSystemUiVisibility(
+                      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                          | View.SYSTEM_UI_FLAG_FULLSCREEN
+                          | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                          | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                          | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                          | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  );
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  super.onWindowFocusChanged(hasFocus);
+
+                  if (hasFocus) {
+                      enterImmersiveMode();
+                  }
+              }
+
+              @Override
+              public boolean onKeyDown(int keyCode, KeyEvent event) {
+
+                  if (
+                      keyCode == KeyEvent.KEYCODE_BACK &&
+                      webView != null &&
+                      webView.canGoBack()
+                  ) {
+                      webView.goBack();
+                      return true;
+                  }
+
+                  return super.onKeyDown(keyCode, event);
+              }
+          }
+          EOF
+
+      - name: Check signing files
+        run: |
+          test -f northstar-release.jks
+          test -f keystore.properties
+          echo "Signing files found"
+
+      - name: Build signed APK
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Prepare APK
+        run: |
+          APK=$(find app/build/outputs/apk/release -type f -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "APK NOT FOUND"
+            exit 1
+          fi
+
+          cp "$APK" NorthStarCafe-FireTV-v1.0.0.apk
+
+          ls -lh NorthStarCafe-FireTV-v1.0.0.apk
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: NorthStarCafe-FireTV-APK
-          path: app/build/outputs/apk/release/*.apk
+          path: NorthStarCafe-FireTV-v1.0.0.apk
           if-no-files-found: error
+          retention-days: 30
